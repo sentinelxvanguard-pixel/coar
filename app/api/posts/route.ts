@@ -7,6 +7,7 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient()
     const limit = 20
     const offset = parseInt(request.nextUrl.searchParams.get('offset') ?? '0')
+    const tab = request.nextUrl.searchParams.get('tab') ?? 'for-you'
 
     // Obtener usuario actual
     const {
@@ -17,21 +18,45 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Obtener posts visibles para el usuario
-    const { data: posts, count, error } = await supabase
+    let query = supabase
       .from('posts')
       .select(
         `
         *,
         user:user_id(id, username, full_name, avatar_url),
-        comments(count),
-        reactions(count)
+        _count:posts(count)
         `,
         { count: 'exact' }
       )
-      .or(
-        `privacy.eq.public,user_id.eq.${user.id},and(privacy.eq.friends_only,user_id.in(select receiver_id from friendships where requester_id='${user.id}' and status='accepted'),user_id.in(select requester_id from friendships where receiver_id='${user.id}' and status='accepted'))`
+
+    // Aplicar filtros según tab
+    if (tab === 'following') {
+      // Posts de usuarios que sigo
+      query = query.in(
+        'user_id',
+        supabase
+          .from('followers')
+          .select('following_id')
+          .eq('follower_id', user.id)
       )
+    } else if (tab === 'friends') {
+      // Posts solo de amigos aceptados
+      query = query.in(
+        'user_id',
+        supabase
+          .from('friendships')
+          .select('requester_id, receiver_id')
+          .or(`and(requester_id.eq.${user.id},status.eq.accepted),and(receiver_id.eq.${user.id},status.eq.accepted)`)
+      )
+    } else if (tab === 'trending') {
+      // Posts más populares (con más reacciones)
+      query = query.order('reactions_count', { ascending: false })
+    } else {
+      // for-you: Mix de públicos y de amigos
+      query = query.or(`privacy.eq.public,user_id.eq.${user.id}`)
+    }
+
+    const { data: posts, count, error } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 

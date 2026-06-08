@@ -1,216 +1,219 @@
 'use client'
 
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { signOutAction } from '@/lib/auth'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import useSWR from 'swr'
+import { Sidebar } from '@/components/layout/Sidebar'
+import { RightSidebar } from '@/components/layout/RightSidebar'
+import { MobileNav } from '@/components/layout/MobileNav'
+import { PostComposer } from '@/components/posts/PostComposer'
+import { PostCard } from '@/components/posts/PostCard'
+import { CommentThread } from '@/components/posts/CommentThread'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { Button } from '@/components/ui/button'
+import { Post, Profile } from '@/lib/types'
+import { createBrowserClient } from '@supabase/ssr'
+import { Loader } from 'lucide-react'
+
+const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 export default function HomePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const tab = searchParams.get('tab') || 'for-you'
+  
+  const [user, setUser] = useState<Profile | null>(null)
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  async function handleLogout() {
-    const result = await signOutAction()
+  // Fetch current user
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+    )
 
-    if (result?.success) {
-      router.push('/login')
+    const getUser = async () => {
+      try {
+        const { data: { user: authUser } } = await supabase.auth.getUser()
+        
+        if (!authUser) {
+          router.push('/login')
+          return
+        }
+
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authUser.id)
+          .single()
+
+        if (data) {
+          setUser(data)
+        }
+      } catch (error) {
+        console.error('Error fetching user:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    getUser()
+  }, [router])
+
+  // Fetch posts based on tab
+  const { data: posts = [], mutate: mutatePosts } = useSWR(
+    user ? `/api/posts?tab=${tab}` : null,
+    fetcher
+  )
+
+  const handleCreatePost = async (content: string, imageUrl: string | null, privacy: string) => {
+    try {
+      const response = await fetch('/api/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, imageUrl, privacy }),
+      })
+
+      if (response.ok) {
+        mutatePosts()
+      }
+    } catch (error) {
+      console.error('Error creating post:', error)
     }
   }
 
+  const handleDeletePost = async (postId: string) => {
+    try {
+      await fetch(`/api/posts/${postId}`, { method: 'DELETE' })
+      mutatePosts()
+    } catch (error) {
+      console.error('Error deleting post:', error)
+    }
+  }
+
+  const handleLikePost = async (postId: string) => {
+    try {
+      await fetch('/api/reactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId, type: 'like' }),
+      })
+      mutatePosts()
+    } catch (error) {
+      console.error('Error liking post:', error)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 flex items-center justify-center">
+        <Loader className="animate-spin text-cyan-500" size={32} />
+      </div>
+    )
+  }
+
   return (
-    <main className="min-h-screen bg-background">
-      {/* Navigation */}
-      <nav className="border-b border-slate-700 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-cyan-400 to-purple-500 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-lg">⚡</span>
+    <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 pb-16 md:pb-0">
+      <Sidebar />
+      <MobileNav />
+      
+      {/* Main Content */}
+      <div className="md:ml-64 2xl:mr-80">
+        {/* Top Bar */}
+        <div className="sticky top-0 z-40 border-b border-slate-800/50 bg-gradient-to-b from-slate-900/95 to-slate-900/85 backdrop-blur">
+          <div className="px-4 md:px-6 py-4 flex items-center justify-between">
+            <div className="flex-1">
+              <h2 className="text-xl font-bold text-white">
+                {tab === 'for-you' && 'Para ti'}
+                {tab === 'following' && 'Siguiendo'}
+                {tab === 'friends' && 'Amigos'}
+                {tab === 'trending' && 'Tendencia'}
+              </h2>
             </div>
-            <span className="text-white font-bold text-2xl">COAR</span>
-          </Link>
-          <Button
-            onClick={handleLogout}
-            variant="outline"
-            className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
-          >
-            Cerrar sesión
-          </Button>
-        </div>
-      </nav>
+            <NotificationBell userId={user?.id || ''} />
+          </div>
 
-      {/* Welcome section */}
-      <div className="max-w-6xl mx-auto px-4 py-16 lg:py-24">
-        <div className="flex flex-col lg:flex-row gap-12 items-center">
-          {/* Text content */}
-          <div className="flex-1 space-y-6">
-            <div className="space-y-4">
-              <h1 className="text-5xl lg:text-6xl font-bold text-white text-balance leading-tight">
-                ¡Bienvenido a{' '}
-                <span className="bg-gradient-to-r from-cyan-400 via-purple-500 to-cyan-400 bg-clip-text text-transparent">
-                  COAR
-                </span>
-              </h1>
-              <p className="text-xl text-slate-300 text-balance">
-                Ya estás dentro de la comunidad. Explora, conecta y comparte lo que más te importa.
-              </p>
-            </div>
-
-            {/* Feature list */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
-              <div className="flex gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/50 transition">
-                <span className="text-2xl">📰</span>
-                <div>
-                  <h3 className="text-white font-semibold mb-1">Mi Feed</h3>
-                  <p className="text-sm text-slate-400">
-                    Descubre publicaciones de personas que sigues
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-purple-500/50 transition">
-                <span className="text-2xl">👥</span>
-                <div>
-                  <h3 className="text-white font-semibold mb-1">Descubrir</h3>
-                  <p className="text-sm text-slate-400">
-                    Encuentra nuevas personas y comunidades
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/50 transition">
-                <span className="text-2xl">📝</span>
-                <div>
-                  <h3 className="text-white font-semibold mb-1">Publicar</h3>
-                  <p className="text-sm text-slate-400">
-                    Comparte tus pensamientos y experiencias
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-purple-500/50 transition">
-                <span className="text-2xl">💬</span>
-                <div>
-                  <h3 className="text-white font-semibold mb-1">Mensajes</h3>
-                  <p className="text-sm text-slate-400">
-                    Chatea con amigos y colegas
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* CTAs */}
-            <div className="flex gap-3 pt-4">
-              <Button className="bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-600 hover:to-purple-700 text-white font-semibold h-10 px-8">
-                Comenzar
-              </Button>
-              <Button
-                variant="outline"
-                className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700 h-10 px-8"
+          {/* Tabs */}
+          <div className="flex items-center gap-4 px-4 md:px-6 border-t border-slate-800/30">
+            {['for-you', 'following', 'friends', 'trending'].map((t) => (
+              <button
+                key={t}
+                onClick={() => {
+                  const params = new URLSearchParams(searchParams.toString())
+                  params.set('tab', t)
+                  router.push(`/home?${params.toString()}`)
+                }}
+                className={`px-4 py-3 font-semibold transition-colors border-b-2 ${
+                  tab === t
+                    ? 'text-white border-cyan-500'
+                    : 'text-slate-400 border-transparent hover:text-slate-300'
+                }`}
               >
-                Explorar comunidades
-              </Button>
-            </div>
+                {t === 'for-you' && 'Para ti'}
+                {t === 'following' && 'Siguiendo'}
+                {t === 'friends' && 'Amigos'}
+                {t === 'trending' && 'Tendencia'}
+              </button>
+            ))}
           </div>
+        </div>
 
-          {/* Illustration */}
-          <div className="flex-1 relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-cyan-500/20 rounded-3xl blur-3xl"></div>
-            <div className="relative bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-transparent border border-cyan-500/20 rounded-3xl p-12 aspect-square flex items-center justify-center">
-              <div className="text-center space-y-4">
-                <div className="text-8xl">🎉</div>
-                <h2 className="text-2xl font-bold text-white">¡Listo para comenzar!</h2>
-                <p className="text-slate-300">
-                  Tu perfil está completo y tu comunidad te espera
-                </p>
-              </div>
+        {/* Feed */}
+        <div className="max-w-2xl mx-auto">
+          {/* Post Composer */}
+          {user && (
+            <div className="sticky top-20 z-30 bg-gradient-to-b from-slate-900 to-slate-900/80 backdrop-blur px-4 md:px-6 py-4 border-b border-slate-800/50">
+              <PostComposer user={user} onSubmit={handleCreatePost} />
             </div>
+          )}
+
+          {/* Posts Feed */}
+          <div className="px-4 md:px-6 py-4">
+            {posts.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-slate-400 text-lg">No hay publicaciones aún</p>
+              </div>
+            ) : (
+              posts.map((post: Post) => (
+                <div key={post.id}>
+                  <PostCard
+                    post={post}
+                    currentUserId={user?.id || ''}
+                    onDelete={handleDeletePost}
+                    onLike={handleLikePost}
+                    onComment={() => setSelectedPost(post)}
+                  />
+                  
+                  {/* Comment Thread Modal */}
+                  {selectedPost?.id === post.id && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                      <div className="bg-gradient-to-b from-slate-900 to-slate-800 border border-slate-800/50 rounded-xl max-w-2xl w-full max-h-96 overflow-y-auto">
+                        <div className="sticky top-0 flex items-center justify-between p-4 border-b border-slate-800/50 bg-slate-900/95">
+                          <h3 className="font-bold text-white">Respuestas</h3>
+                          <button
+                            onClick={() => setSelectedPost(null)}
+                            className="text-slate-400 hover:text-white"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <CommentThread
+                          post={selectedPost}
+                          currentUserId={user?.id || ''}
+                          onCommented={() => mutatePosts()}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
 
-      {/* Stats section */}
-      <div className="bg-slate-800/50 border-y border-slate-700 py-12">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent mb-2">
-                50K+
-              </div>
-              <p className="text-slate-300">Usuarios activos</p>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold bg-gradient-to-r from-purple-500 to-cyan-400 bg-clip-text text-transparent mb-2">
-                1M+
-              </div>
-              <p className="text-slate-300">Publicaciones diarias</p>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent mb-2">
-                24/7
-              </div>
-              <p className="text-slate-300">Disponible siempre</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-700 py-8 mt-12">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-            <div>
-              <h4 className="font-semibold text-white mb-4">COAR</h4>
-              <p className="text-sm text-slate-400">
-                La red social donde conectas con tu comunidad
-              </p>
-            </div>
-            <div>
-              <h4 className="font-semibold text-white mb-4">Producto</h4>
-              <ul className="space-y-2 text-sm text-slate-400">
-                <li>
-                  <Link href="/home" className="hover:text-cyan-400">
-                    Feed
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/home" className="hover:text-cyan-400">
-                    Descubrir
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/home" className="hover:text-cyan-400">
-                    Mensajes
-                  </Link>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-white mb-4">Legal</h4>
-              <ul className="space-y-2 text-sm text-slate-400">
-                <li>
-                  <Link href="/privacy" className="hover:text-cyan-400">
-                    Privacidad
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/terms" className="hover:text-cyan-400">
-                    Términos
-                  </Link>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-white mb-4">Contacto</h4>
-              <ul className="space-y-2 text-sm text-slate-400">
-                <li>
-                  <a href="mailto:support@coar.social" className="hover:text-cyan-400">
-                    Soporte
-                  </a>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <div className="border-t border-slate-700 pt-8 text-center text-sm text-slate-400">
-            <p>&copy; 2024 COAR. Todos los derechos reservados.</p>
-          </div>
-        </div>
-      </footer>
-    </main>
+      <RightSidebar />
+    </div>
   )
 }
